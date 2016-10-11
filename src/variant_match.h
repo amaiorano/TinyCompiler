@@ -4,17 +4,17 @@
 #include <type_traits>
 
 // Add missing variant_size and variant_size_v (Submitted a PR for this)
-//namespace std {
-//	namespace experimental {
-//		template <class VariantType>
-//		struct variant_size
-//		{
-//			static constexpr auto value = std::experimental::fundamentals_v3::tuple_size<VariantType>::value;
-//		};
-//		template <class VariantType>
-//		constexpr std::size_t variant_size_v = variant_size<VariantType>::value;
-//	}
-//}
+namespace std {
+	namespace experimental {
+		template <class VariantType>
+		struct variant_size
+		{
+			static constexpr auto value = std::experimental::fundamentals_v3::tuple_size<VariantType>::value;
+		};
+		template <class VariantType>
+		constexpr std::size_t variant_size_v = variant_size<VariantType>::value;
+	}
+}
 
 namespace match_detail
 {

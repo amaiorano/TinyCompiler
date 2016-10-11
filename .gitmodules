@@ -1,0 +1,3 @@
+[submodule "external/variant"]
+	path = external/variant
+	url = https://github.com/mpark/variant
