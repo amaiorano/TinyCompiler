@@ -2,7 +2,6 @@
 #include <vector>
 #include <memory>
 #include <iostream>
-
 #include "variant_match.h"
 
 struct Token
@@ -85,120 +84,83 @@ std::vector<Token> Tokenize(const std::string text)
 	return tokens;
 }
 
-
-
 namespace AST
 {
-	struct Visitor
-	{
-		virtual void OnVisit(struct Program& program) = 0;
-		virtual void OnVisit(struct CallExpression& callExpression) = 0;
-		virtual void OnVisit(struct NumberLiteral& numberLiteral) = 0;
-	};
-
 	struct Node
 	{
-		using NodeUniquePtr = std::unique_ptr<Node>;
-	
-		Node* parent = nullptr;
-		std::vector<NodeUniquePtr> children;
-
-		void AddChild(NodeUniquePtr node)
-		{
-			node->parent = this;
-			children.emplace_back(move(node));
-		}
-
-		virtual void Visit(Visitor& visitor) = 0;
+		virtual ~Node() = default;
 	};
 	
 	using NodeUniquePtr = std::unique_ptr<Node>;
 
-	struct Program : Node
+	struct ProgramNode : Node
 	{
 		std::string name;
-		//std::vector<NodeUniquePtr> body;
-
-		void Visit(Visitor& visitor) override
-		{
-			visitor.OnVisit(*this);
-			for (auto& node : children)
-				node->Visit(visitor);
-		}
+		std::vector<NodeUniquePtr> body;
 	};
 
-	struct CallExpression : Node
+	struct CallExpressionNode : Node
 	{
 		std::string name;
-		//std::vector<NodeUniquePtr> params;
-
-		void Visit(Visitor& visitor) override
-		{
-			visitor.OnVisit(*this);
-			for (auto& param : children)
-				param->Visit(visitor);
-		}
+		std::vector<NodeUniquePtr> params;
 	};
 
-	struct NumberLiteral : Node
+	struct NumberLiteralNode : Node
 	{
 		int value;
-		NumberLiteral(int v) : value(v) {}
-
-		void Visit(Visitor& visitor) override
-		{
-			visitor.OnVisit(*this);
-		}
+		NumberLiteralNode(int v) : value(v) {}
 	};
 
-	//template <typename CurrIter, typename EndIter>
-	NodeUniquePtr ParseCallExpression(std::vector<Token>::const_iterator& iter, const std::vector<Token>::const_iterator& endIter)
+	namespace
 	{
-		auto callExpression = std::make_unique<CallExpression>();
-
-		const auto& firstToken = *iter;
-		if (firstToken.type != Token::Type::Name)
-			throw std::exception("Expecting function name immediately after '('");
-
-		callExpression->name = iter->value;
-		++iter;
-
-		while (iter != endIter)
+		NodeUniquePtr ParseCallExpression(std::vector<Token>::const_iterator& iter, const std::vector<Token>::const_iterator& endIter)
 		{
-			switch (iter->type)
+			auto callExpression = std::make_unique<CallExpressionNode>();
+
+			const auto& firstToken = *iter;
+			if (firstToken.type != Token::Type::Name)
+				throw std::exception("Expecting function name immediately after '('");
+
+			callExpression->name = iter->value;
+			++iter;
+
+			while (iter != endIter)
 			{
-			case Token::Type::Paren:
-				if (iter->value == ")")
+				switch (iter->type)
 				{
-					++iter;
-					return move(callExpression);
-				}
-				else
-				{
-					++iter;
-					callExpression->AddChild(ParseCallExpression(iter, endIter));
-				}
-				break;
+				case Token::Type::Paren:
+					if (iter->value == ")")
+					{
+						++iter;
+						return move(callExpression);
+					}
+					else
+					{
+						++iter;
+						callExpression->params.emplace_back(ParseCallExpression(iter, endIter));
+					}
+					break;
 
-			case Token::Type::Name:
-				throw std::exception("Unexpected name token in argument list");
-				break;
+				case Token::Type::Name:
+					throw std::exception("Unexpected name token in argument list");
+					break;
 
-			case Token::Type::Number:
-				callExpression->AddChild(std::make_unique<NumberLiteral>(stoi(iter->value)));
-				++iter;
-				break;
+				case Token::Type::Number:
+					callExpression->params.emplace_back(std::make_unique<NumberLiteralNode>(stoi(iter->value)));
+					++iter;
+					break;
+				}
 			}
-		}
 
-		throw std::exception("Missing ')' to end call expression");
-		return nullptr;
+			throw std::exception("Missing ')' to end call expression");
+			return nullptr;
+		}
 	}
 
 	NodeUniquePtr Parse(const std::vector<Token>& tokens)
 	{
 		using namespace AST;
-		auto programNode = std::make_unique<Program>();
+		auto programNode = std::make_unique<ProgramNode>();
 
 		auto tokenIter = begin(tokens);
 		auto tokenEnd = end(tokens);
@@ -214,10 +176,48 @@ namespace AST
 				throw std::exception("Program must start with '('");
 			++tokenIter;
 
-			programNode->AddChild(ParseCallExpression(tokenIter, tokenEnd));
+			programNode->body.emplace_back(ParseCallExpression(tokenIter, tokenEnd));
 		}
 
 		return move(programNode);
+	}
+
+	template <typename TargetNodeType, typename NodeType>
+	auto AsNodePtr(NodeType&& node)
+	{
+		return dynamic_cast<TargetNodeType>(node.get());
+	}
+
+	struct Visitor
+	{
+		virtual void OnVisit(const ProgramNode& program, int depth) {}
+		virtual void OnVisit(const CallExpressionNode& callExpression, const Node& parent, int depth) {}
+		virtual void OnVisit(const NumberLiteralNode& numberLiteral, const Node& parent, int depth) {}
+	};
+
+	void Visit(const NodeUniquePtr& rootNode, const Node* parent, Visitor& visitor, int depth = 0)
+	{
+		if (auto node = AsNodePtr<const ProgramNode*>(rootNode))
+		{
+			assert(parent == nullptr);
+			visitor.OnVisit(*node, depth);
+			for (auto&& n : node->body)
+				Visit(n, node, visitor, depth + 1);
+		}
+		else if (auto node = AsNodePtr<const CallExpressionNode*>(rootNode))
+		{
+			visitor.OnVisit(*node, *parent, depth);
+			for (auto&& n : node->params)
+				Visit(n, node, visitor, depth + 1);
+		}
+		else if (auto node = AsNodePtr<const NumberLiteralNode*>(rootNode))
+		{
+			visitor.OnVisit(*node, *parent, depth);
+		}
+		else
+		{
+			assert(false && "Unhandled node type");
+		}
 	}
 }
 
@@ -231,28 +231,39 @@ void Compile(const std::string& program)
 	// 2. syntactic analysis (create AST)
 	auto programNode = AST::Parse(tokens);
 
-	struct PrintAST : AST::Visitor
 	{
-		virtual void OnVisit(struct AST::Program& program)
+		using namespace AST;
+		struct PrintAST : Visitor
 		{
-			std::cout << "[Program]\n";
-		}
-		virtual void OnVisit(struct AST::CallExpression& callExpression)
-		{
-			std::cout << "\t[CallExpression] name: " << callExpression.name << "\n\t";
-		}
-		virtual void OnVisit(struct AST::NumberLiteral& numberLiteral)
-		{
-			std::cout << "[NumberLiteral] value: " << numberLiteral.value << "\n";
-		}
-	};
+			void Indent(int depth)
+			{
+				for (int i = 0; i < depth; ++i)
+				{
+					std::cout << "  ";
+				}
+			}
 
-	auto printAST = PrintAST();
-	programNode->Visit(printAST);
+			virtual void OnVisit(const ProgramNode& program, int depth)
+			{
+				std::cout << "[Program]\n";
+			}
+			virtual void OnVisit(const CallExpressionNode& callExpression, const Node& parent, int depth)
+			{
+				Indent(depth);
+				std::cout << "[CallExpression] name: " << callExpression.name << '\n';
+			}
+			virtual void OnVisit(const NumberLiteralNode& numberLiteral, const Node& parent, int depth)
+			{
+				Indent(depth);
+				std::cout << "[NumberLiteral] value: " << numberLiteral.value << '\n';
+			}
+		};
 
-
+		auto printAST = PrintAST();
+		AST::Visit(programNode, nullptr, printAST);
+	}
+	
 	// transformation
-
 }
 
 
@@ -266,12 +277,11 @@ int main(int argc, char* argv[])
  *   2 + (4 - 2)    (add 2 (subtract 4 2))    add(2, subtract(4, 2))
  */
 	//std::string program = "(add 2 2)";
-		//"(add 2 (subtract 4 2))"
+	//std::string program = "(add 2 (subtract 4 2))";
 	std::string program =
 		"(add 2 (subtract 4 2))"
 		"(subtract 4 2)"
 		;
-
 
 	Compile(program);
 
