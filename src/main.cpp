@@ -84,14 +84,19 @@ std::vector<Token> Tokenize(const std::string text)
 	return tokens;
 }
 
-namespace AST
+namespace CommonAst
 {
 	struct Node
 	{
 		virtual ~Node() = default;
 	};
-	
+
 	using NodeUniquePtr = std::unique_ptr<Node>;
+}
+
+namespace LispAst
+{
+	using namespace CommonAst;
 
 	struct ProgramNode : Node
 	{
@@ -132,7 +137,7 @@ namespace AST
 					if (iter->value == ")")
 					{
 						++iter;
-						return move(callExpression);
+						return std::move(callExpression);
 					}
 					else
 					{
@@ -159,7 +164,7 @@ namespace AST
 
 	NodeUniquePtr Parse(const std::vector<Token>& tokens)
 	{
-		using namespace AST;
+		using namespace LispAst;
 		auto programNode = std::make_unique<ProgramNode>();
 
 		auto tokenIter = begin(tokens);
@@ -179,7 +184,7 @@ namespace AST
 			programNode->body.emplace_back(ParseCallExpression(tokenIter, tokenEnd));
 		}
 
-		return move(programNode);
+		return std::move(programNode);
 	}
 
 	template <typename TargetNodeType, typename NodeType>
@@ -219,20 +224,82 @@ namespace AST
 			assert(false && "Unhandled node type");
 		}
 	}
+} // namespace LispAst
+
+namespace CppAst
+{
+	using namespace CommonAst;
+
+	struct ProgramNode : Node
+	{
+		std::string name;
+		std::vector<NodeUniquePtr> body;
+	};
+
+	struct IdentifierNode : Node
+	{
+		std::string name;
+	};
+
+	struct NumberLiteralNode : Node
+	{
+		int value;
+		NumberLiteralNode(int v) : value(v) {}
+	};
+
+	struct CallExpressionNode : Node
+	{
+		//NodeUniquePtr callee;
+		std::unique_ptr<IdentifierNode> callee;
+		std::vector<NodeUniquePtr> params;
+	};
+
+	struct ExpressionStatementNode : Node
+	{
+		//NodeUniquePtr expression;
+		std::unique_ptr<CallExpressionNode> expression;
+	};
 }
 
+CppAst::NodeUniquePtr TransformLispAstToCppAst(const LispAst::NodeUniquePtr& lispAst)
+{
+	struct Transformer : LispAst::Visitor
+	{
+		CppAst::NodeUniquePtr programNode;
+
+		virtual void OnVisit(const LispAst::ProgramNode& program, int depth)
+		{
+		}
+
+		virtual void OnVisit(const LispAst::CallExpressionNode& callExpression, const LispAst::Node& parent, int depth)
+		{
+		}
+
+		virtual void OnVisit(const LispAst::NumberLiteralNode& numberLiteral, const LispAst::Node& parent, int depth)
+		{
+		}
+	};
+
+	auto transformer = Transformer();
+	LispAst::Visit(lispAst, nullptr, transformer);
+
+	return std::move(transformer.programNode);
+}
 
 void Compile(const std::string& program)
 {
-	// parsing
+	/////////////////////
+	// Parsing
+	/////////////////////
+
 	// 1. lexical analysis (tokenizing)
 	auto tokens = Tokenize(program);
 
-	// 2. syntactic analysis (create AST)
-	auto programNode = AST::Parse(tokens);
+	// 2. syntactic analysis (create the Lisp AST)
+	auto lispAst = LispAst::Parse(tokens);
 
 	{
-		using namespace AST;
+		using namespace LispAst;
 		struct PrintAST : Visitor
 		{
 			void Indent(int depth)
@@ -260,10 +327,14 @@ void Compile(const std::string& program)
 		};
 
 		auto printAST = PrintAST();
-		AST::Visit(programNode, nullptr, printAST);
+		LispAst::Visit(lispAst, nullptr, printAST);
 	}
 	
-	// transformation
+	/////////////////////
+	// Transformation
+	/////////////////////
+
+	auto cppAst = TransformLispAstToCppAst(lispAst);
 }
 
 
