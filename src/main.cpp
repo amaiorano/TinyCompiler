@@ -2,6 +2,7 @@
 #include <vector>
 #include <memory>
 #include <iostream>
+#include <map>
 #include "variant_match.h"
 
 struct Token
@@ -224,82 +225,9 @@ namespace LispAst
 			assert(false && "Unhandled node type");
 		}
 	}
-} // namespace LispAst
 
-namespace CppAst
-{
-	using namespace CommonAst;
-
-	struct ProgramNode : Node
+	void PrintAst(const NodeUniquePtr& lispAst)
 	{
-		std::string name;
-		std::vector<NodeUniquePtr> body;
-	};
-
-	struct IdentifierNode : Node
-	{
-		std::string name;
-	};
-
-	struct NumberLiteralNode : Node
-	{
-		int value;
-		NumberLiteralNode(int v) : value(v) {}
-	};
-
-	struct CallExpressionNode : Node
-	{
-		//NodeUniquePtr callee;
-		std::unique_ptr<IdentifierNode> callee;
-		std::vector<NodeUniquePtr> params;
-	};
-
-	struct ExpressionStatementNode : Node
-	{
-		//NodeUniquePtr expression;
-		std::unique_ptr<CallExpressionNode> expression;
-	};
-}
-
-CppAst::NodeUniquePtr TransformLispAstToCppAst(const LispAst::NodeUniquePtr& lispAst)
-{
-	struct Transformer : LispAst::Visitor
-	{
-		CppAst::NodeUniquePtr programNode;
-
-		virtual void OnVisit(const LispAst::ProgramNode& program, int depth)
-		{
-		}
-
-		virtual void OnVisit(const LispAst::CallExpressionNode& callExpression, const LispAst::Node& parent, int depth)
-		{
-		}
-
-		virtual void OnVisit(const LispAst::NumberLiteralNode& numberLiteral, const LispAst::Node& parent, int depth)
-		{
-		}
-	};
-
-	auto transformer = Transformer();
-	LispAst::Visit(lispAst, nullptr, transformer);
-
-	return std::move(transformer.programNode);
-}
-
-void Compile(const std::string& program)
-{
-	/////////////////////
-	// Parsing
-	/////////////////////
-
-	// 1. lexical analysis (tokenizing)
-	auto tokens = Tokenize(program);
-
-	// 2. syntactic analysis (create the Lisp AST)
-	auto lispAst = LispAst::Parse(tokens);
-
-	{
-		using namespace LispAst;
 		struct PrintAST : Visitor
 		{
 			void Indent(int depth)
@@ -329,6 +257,139 @@ void Compile(const std::string& program)
 		auto printAST = PrintAST();
 		LispAst::Visit(lispAst, nullptr, printAST);
 	}
+} // namespace LispAst
+
+namespace CppAst
+{
+	using namespace CommonAst;
+
+	struct ProgramNode : Node
+	{
+		std::string name;
+		std::vector<NodeUniquePtr> body;
+	};
+
+	struct IdentifierNode : Node
+	{
+		std::string name;
+		IdentifierNode(std::string name) : name(std::move(name)) {}
+	};
+
+	struct NumberLiteralNode : Node
+	{
+		int value;
+		NumberLiteralNode(int v) : value(v) {}
+	};
+
+	struct CallExpressionNode : Node
+	{
+		//NodeUniquePtr callee;
+		std::unique_ptr<IdentifierNode> callee;
+		std::vector<NodeUniquePtr> params;
+	};
+
+	struct ExpressionStatementNode : Node
+	{
+		//NodeUniquePtr expression;
+		std::unique_ptr<CallExpressionNode> expression;
+	};
+}
+
+// std::less<reference_wrapper<T>> doesn't work in containers like map, so use this instead
+template <typename T>
+struct reference_wrapper_less
+{
+	bool operator()(const std::reference_wrapper<T>& lhs, const std::reference_wrapper<T>& rhs) const { return &lhs.get() < &rhs.get(); }
+};
+
+CppAst::NodeUniquePtr TransformLispAstToCppAst(const LispAst::NodeUniquePtr& lispAst)
+{
+	struct Transformer : LispAst::Visitor
+	{
+		CppAst::NodeUniquePtr m_programNode;
+
+		// Map of Lisp parent nodes to Cpp vectors of nodes. This basically allows us to find the relevant parent
+		// vector to add a Cpp node to from within visitor callbacks.
+		std::map<
+			std::reference_wrapper<const LispAst::Node>,
+			std::reference_wrapper<std::vector<CppAst::NodeUniquePtr>>,
+			reference_wrapper_less<const LispAst::Node>
+		> m_context;
+
+		std::vector<CppAst::NodeUniquePtr>& GetContextVector(const LispAst::Node& lispNode)
+		{
+			auto iter = m_context.find(lispNode);
+			assert(iter != m_context.end());
+			return iter->second.get();
+		}
+
+		virtual void OnVisit(const LispAst::ProgramNode& lispProgramNode, int depth)
+		{
+			assert(m_programNode == nullptr);
+			auto cppProgramNode = std::make_unique<CppAst::ProgramNode>();
+			m_context.emplace(std::cref(lispProgramNode), std::ref(cppProgramNode->body));
+			m_programNode = std::move(cppProgramNode);
+		}
+
+		virtual void OnVisit(const LispAst::CallExpressionNode& lispCallExpressionNode, const LispAst::Node& parent, int depth)
+		{
+			assert(m_programNode);
+
+			// Create call expression with nested identifier and no parameters
+			auto callExpressionNode = std::make_unique<CppAst::CallExpressionNode>();
+			callExpressionNode->callee = std::make_unique<CppAst::IdentifierNode>(lispCallExpressionNode.name);
+
+			// Add mapping from the Lisp CallExpressionNode to the parameter vector of our new Cpp CallExpressionNode.
+			m_context.emplace(std::cref(lispCallExpressionNode), std::ref(callExpressionNode->params));
+
+			auto newNode = [&]() -> CppAst::NodeUniquePtr
+			{
+				// If parent is not a CallExpression, we wrap up our Cpp CallExpression node with an ExpressionStatement,
+				// because in C++, top-level call expressions are statements.
+				if (!dynamic_cast<const LispAst::CallExpressionNode*>(&parent))
+				{
+					auto expressionStatementNode = std::make_unique<CppAst::ExpressionStatementNode>();
+					expressionStatementNode->expression = std::move(callExpressionNode);
+					//callExpressionNode = std::move(expressionStatementNode);
+					return std::move(expressionStatementNode);
+				}
+				else
+				{
+					return std::move(callExpressionNode);
+				}
+			} ();
+
+			// Add new node to parent's context
+			GetContextVector(parent).push_back(std::move(newNode));
+		}
+
+		virtual void OnVisit(const LispAst::NumberLiteralNode& lispNumberLiteralNode, const LispAst::Node& parent, int depth)
+		{
+			assert(m_programNode);
+			auto newNode = std::make_unique<CppAst::NumberLiteralNode>(lispNumberLiteralNode.value);
+			GetContextVector(parent).push_back(std::move(newNode));
+		}
+	};
+
+	auto transformer = Transformer();
+	LispAst::Visit(lispAst, nullptr, transformer);
+
+	return std::move(transformer.m_programNode);
+}
+
+void Compile(const std::string& program)
+{
+	/////////////////////
+	// Parsing
+	/////////////////////
+
+	// 1. lexical analysis (tokenizing)
+	auto tokens = Tokenize(program);
+
+	// 2. syntactic analysis (create the Lisp AST)
+	auto lispAst = LispAst::Parse(tokens);
+
+	LispAst::PrintAst(lispAst);
 	
 	/////////////////////
 	// Transformation
