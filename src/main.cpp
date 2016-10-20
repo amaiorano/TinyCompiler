@@ -2,6 +2,7 @@
 #include <vector>
 #include <memory>
 #include <iostream>
+#include <sstream>
 #include <map>
 #include "variant_match.h"
 
@@ -334,18 +335,18 @@ namespace CppAst
 		}
 		else if (auto node = AsNodePtr<const IdentifierNode*>(rootNode))
 		{
-			Indent(depth); std::cout << "[Identifier] name: " << node->name << "\n";
+			Indent(depth); std::cout << "[Identifier] name: " << node->name << '\n';
 		}
 		else if (auto node = AsNodePtr<const NumberLiteralNode*>(rootNode))
 		{
-			Indent(depth); std::cout << "[NumberLiteralNode] value: " << node->value << "\n";
+			Indent(depth); std::cout << "[NumberLiteralNode] value: " << node->value << '\n';
 		}
 		else
 		{
 			assert(false && "Unhandled node type");
 		}
 	}
-}
+} // namespace CppAst
 
 // std::less<reference_wrapper<T>> doesn't work in containers like map, so use this instead
 template <typename T>
@@ -429,21 +430,97 @@ CppAst::NodeUniquePtr TransformLispAstToCppAst(const LispAst::NodeUniquePtr& lis
 	return std::move(transformer.m_programNode);
 }
 
-void Compile(const std::string& program)
+namespace impl
 {
+	template <typename NodeUniquePtrType>
+	void GenerateCppCodeImpl(const NodeUniquePtrType& rootNode, std::ostream& os, int depth = 0)
+	{
+		using namespace CppAst;
+		
+		auto Indent = [&](int depth)
+		{
+			for (int i = 0; i < depth; ++i)
+			{
+				os << "  ";
+			}
+		};
+
+		if (auto node = AsNodePtr<const ProgramNode*>(rootNode))
+		{
+			os << "int main()\n";
+			os << "{\n";
+			for (auto&& bodyNode : node->body)
+			{
+				GenerateCppCodeImpl(bodyNode, os, depth + 1);
+			}
+			os << "}\n";
+		}
+		else if (auto node = AsNodePtr<const ExpressionStatementNode*>(rootNode))
+		{
+			Indent(depth);
+			GenerateCppCodeImpl(node->expression, os, depth + 1);
+			os << ";\n";
+		}
+		else if (auto node = AsNodePtr<const CallExpressionNode*>(rootNode))
+		{
+			GenerateCppCodeImpl(node->callee, os, depth + 1);
+			os << "(";
+			for (auto iter = begin(node->params); iter != end(node->params); ++iter)
+			{
+				auto&& param = *iter;
+				GenerateCppCodeImpl(param, os, depth + 1);
+				if ((iter + 1) != end(node->params))
+				{
+					GenerateCppCodeImpl(param, os, depth + 1);
+					os << ", ";
+				}
+			}
+			os << ")";
+		}
+		else if (auto node = AsNodePtr<const IdentifierNode*>(rootNode))
+		{
+			os << node->name;
+		}
+		else if (auto node = AsNodePtr<const NumberLiteralNode*>(rootNode))
+		{
+			os << node->value;
+		}
+		else
+		{
+			assert(false && "Unhandled node type");
+		}
+	}
+} // namespace impl
+
+std::string GenerateCppCode(const CppAst::NodeUniquePtr& cppAst)
+{
+	std::stringstream sstream;
+	impl::GenerateCppCodeImpl(cppAst, sstream);
+	return sstream.str();
+}
+
+void Compile(const std::string& lispCode)
+{
+	const bool printAsts = true;
+
+	std::cout << "Input Lisp code:\n" << lispCode << "\n";
+
 	/////////////////////
 	// Parsing
 	/////////////////////
 
 	// 1. lexical analysis (tokenizing)
-	auto tokens = Tokenize(program);
+	auto tokens = Tokenize(lispCode);
 
 	// 2. syntactic analysis (create the Lisp AST)
 	auto lispAst = LispAst::Parse(tokens);
 
-	std::cout << "Lisp AST:\n";
-	LispAst::PrintAst(lispAst);
-	std::cout << '\n';
+	if (printAsts)
+	{
+		std::cout << "Lisp AST:\n";
+		LispAst::PrintAst(lispAst);
+		std::cout << '\n';
+	}
 
 	/////////////////////
 	// Transformation
@@ -451,9 +528,19 @@ void Compile(const std::string& program)
 
 	auto cppAst = TransformLispAstToCppAst(lispAst);
 
-	std::cout << "Cpp AST:\n";
-	CppAst::PrintAst(cppAst);
-	std::cout << '\n';
+	if (printAsts)
+	{
+		std::cout << "Cpp AST:\n";
+		CppAst::PrintAst(cppAst);
+		std::cout << '\n';
+	}
+
+	/////////////////////
+	// Code Generation
+	/////////////////////
+
+	auto cppCode = GenerateCppCode(cppAst);
+	std::cout << "Generated Cpp Code:\n" << cppCode << '\n';
 }
 
 int main(int argc, char* argv[])
@@ -465,14 +552,13 @@ int main(int argc, char* argv[])
  *   4 - 2          (subtract 4 2)            subtract(4, 2)
  *   2 + (4 - 2)    (add 2 (subtract 4 2))    add(2, subtract(4, 2))
  */
-	//std::string program = "(add 2 2)";
-	//std::string program = "(add 2 (subtract 4 2))";
-	std::string program =
-		"(add 2 (subtract 4 2))"
-		"(subtract 4 2)"
+	std::string lispCode =
+		"(add 2 (subtract 4 2))\n"
+		"(subtract 3 7)\n"
+		"(foo (bar (len 2 3)))\n"
 		;
 
-	Compile(program);
+	Compile(lispCode);
 
 	return 0;
 }
