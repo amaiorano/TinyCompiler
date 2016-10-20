@@ -474,7 +474,6 @@ namespace impl
 				GenerateCppCodeImpl(param, os, depth + 1);
 				if ((iter + 1) != end(node->params))
 				{
-					GenerateCppCodeImpl(param, os, depth + 1);
 					os << ", ";
 				}
 			}
