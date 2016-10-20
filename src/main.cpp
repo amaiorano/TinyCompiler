@@ -93,6 +93,12 @@ namespace CommonAst
 	};
 
 	using NodeUniquePtr = std::unique_ptr<Node>;
+
+	template <typename TargetNodeType, typename NodeType>
+	auto AsNodePtr(NodeType&& node)
+	{
+		return dynamic_cast<TargetNodeType>(node.get());
+	}
 }
 
 namespace LispAst
@@ -186,12 +192,6 @@ namespace LispAst
 		}
 
 		return std::move(programNode);
-	}
-
-	template <typename TargetNodeType, typename NodeType>
-	auto AsNodePtr(NodeType&& node)
-	{
-		return dynamic_cast<TargetNodeType>(node.get());
 	}
 
 	struct Visitor
@@ -293,6 +293,58 @@ namespace CppAst
 		//NodeUniquePtr expression;
 		std::unique_ptr<CallExpressionNode> expression;
 	};
+
+	template <typename NodeUniquePtrType> // Note: need template only because 'callee' and 'expression' are not NodeUniquePtrs
+	void PrintAst(const NodeUniquePtrType& rootNode, int depth=0)
+	{
+		auto Indent = [](int depth)
+		{
+			for (int i = 0; i < depth; ++i)
+			{
+				std::cout << "  ";
+			}
+		};
+
+		if (auto node = AsNodePtr<const ProgramNode*>(rootNode))
+		{
+			Indent(depth); std::cout << "[Program]\n";
+			Indent(depth); std::cout << " Body:\n";
+			for (auto&& bodyNode : node->body)
+			{
+				PrintAst(bodyNode, depth + 1);
+			}
+		}
+		else if (auto node = AsNodePtr<const ExpressionStatementNode*>(rootNode))
+		{
+			Indent(depth); std::cout << "[ExpressionStatement]\n";
+			Indent(depth); std::cout << " Expression:\n";
+			PrintAst(node->expression, depth + 1);
+		}
+		else if (auto node = AsNodePtr<const CallExpressionNode*>(rootNode))
+		{
+			Indent(depth); std::cout << "[CallExpression]\n";
+			Indent(depth); std::cout << " Callee:\n";
+			PrintAst(node->callee, depth + 1);
+			Indent(depth); std::cout << " Params:\n";
+			for (auto&& param : node->params)
+			{
+				PrintAst(param, depth + 1);
+			}
+
+		}
+		else if (auto node = AsNodePtr<const IdentifierNode*>(rootNode))
+		{
+			Indent(depth); std::cout << "[Identifier] name: " << node->name << "\n";
+		}
+		else if (auto node = AsNodePtr<const NumberLiteralNode*>(rootNode))
+		{
+			Indent(depth); std::cout << "[NumberLiteralNode] value: " << node->value << "\n";
+		}
+		else
+		{
+			assert(false && "Unhandled node type");
+		}
+	}
 }
 
 // std::less<reference_wrapper<T>> doesn't work in containers like map, so use this instead
@@ -389,15 +441,20 @@ void Compile(const std::string& program)
 	// 2. syntactic analysis (create the Lisp AST)
 	auto lispAst = LispAst::Parse(tokens);
 
+	std::cout << "Lisp AST:\n";
 	LispAst::PrintAst(lispAst);
-	
+	std::cout << '\n';
+
 	/////////////////////
 	// Transformation
 	/////////////////////
 
 	auto cppAst = TransformLispAstToCppAst(lispAst);
-}
 
+	std::cout << "Cpp AST:\n";
+	CppAst::PrintAst(cppAst);
+	std::cout << '\n';
+}
 
 int main(int argc, char* argv[])
 {
