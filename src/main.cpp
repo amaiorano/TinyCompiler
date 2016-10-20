@@ -227,35 +227,38 @@ namespace LispAst
 		}
 	}
 
-	void PrintAst(const NodeUniquePtr& lispAst)
+	void PrintAst(const NodeUniquePtr& lispAst, std::ostream& os)
 	{
 		struct PrintAST : Visitor
 		{
+			std::ostream& os;
+			PrintAST(std::ostream& os) : os(os) {}
+
 			void Indent(int depth)
 			{
 				for (int i = 0; i < depth; ++i)
 				{
-					std::cout << "  ";
+					os << "  ";
 				}
 			}
 
 			virtual void OnVisit(const ProgramNode& program, int depth)
 			{
-				std::cout << "[Program]\n";
+				os << "[Program]\n";
 			}
 			virtual void OnVisit(const CallExpressionNode& callExpression, const Node& parent, int depth)
 			{
 				Indent(depth);
-				std::cout << "[CallExpression] name: " << callExpression.name << '\n';
+				os << "[CallExpression] name: " << callExpression.name << '\n';
 			}
 			virtual void OnVisit(const NumberLiteralNode& numberLiteral, const Node& parent, int depth)
 			{
 				Indent(depth);
-				std::cout << "[NumberLiteral] value: " << numberLiteral.value << '\n';
+				os << "[NumberLiteral] value: " << numberLiteral.value << '\n';
 			}
 		};
 
-		auto printAST = PrintAST();
+		auto printAST = PrintAST(os);
 		LispAst::Visit(lispAst, nullptr, printAST);
 	}
 } // namespace LispAst
@@ -296,50 +299,50 @@ namespace CppAst
 	};
 
 	template <typename NodeUniquePtrType> // Note: need template only because 'callee' and 'expression' are not NodeUniquePtrs
-	void PrintAst(const NodeUniquePtrType& rootNode, int depth=0)
+	void PrintAst(const NodeUniquePtrType& rootNode, std::ostream& os, int depth=0)
 	{
-		auto Indent = [](int depth)
+		auto Indent = [&os](int depth)
 		{
 			for (int i = 0; i < depth; ++i)
 			{
-				std::cout << "  ";
+				os << "  ";
 			}
 		};
 
 		if (auto node = AsNodePtr<const ProgramNode*>(rootNode))
 		{
-			Indent(depth); std::cout << "[Program]\n";
-			Indent(depth); std::cout << " Body:\n";
+			Indent(depth); os << "[Program]\n";
+			Indent(depth); os << " Body:\n";
 			for (auto&& bodyNode : node->body)
 			{
-				PrintAst(bodyNode, depth + 1);
+				PrintAst(bodyNode, os, depth + 1);
 			}
 		}
 		else if (auto node = AsNodePtr<const ExpressionStatementNode*>(rootNode))
 		{
-			Indent(depth); std::cout << "[ExpressionStatement]\n";
-			Indent(depth); std::cout << " Expression:\n";
-			PrintAst(node->expression, depth + 1);
+			Indent(depth); os << "[ExpressionStatement]\n";
+			Indent(depth); os << " Expression:\n";
+			PrintAst(node->expression, os, depth + 1);
 		}
 		else if (auto node = AsNodePtr<const CallExpressionNode*>(rootNode))
 		{
-			Indent(depth); std::cout << "[CallExpression]\n";
-			Indent(depth); std::cout << " Callee:\n";
-			PrintAst(node->callee, depth + 1);
-			Indent(depth); std::cout << " Params:\n";
+			Indent(depth); os << "[CallExpression]\n";
+			Indent(depth); os << " Callee:\n";
+			PrintAst(node->callee, os, depth + 1);
+			Indent(depth); os << " Params:\n";
 			for (auto&& param : node->params)
 			{
-				PrintAst(param, depth + 1);
+				PrintAst(param, os, depth + 1);
 			}
 
 		}
 		else if (auto node = AsNodePtr<const IdentifierNode*>(rootNode))
 		{
-			Indent(depth); std::cout << "[Identifier] name: " << node->name << '\n';
+			Indent(depth); os << "[Identifier] name: " << node->name << '\n';
 		}
 		else if (auto node = AsNodePtr<const NumberLiteralNode*>(rootNode))
 		{
-			Indent(depth); std::cout << "[NumberLiteralNode] value: " << node->value << '\n';
+			Indent(depth); os << "[NumberLiteralNode] value: " << node->value << '\n';
 		}
 		else
 		{
@@ -518,7 +521,7 @@ void Compile(const std::string& lispCode)
 	if (printAsts)
 	{
 		std::cout << "Lisp AST:\n";
-		LispAst::PrintAst(lispAst);
+		LispAst::PrintAst(lispAst, std::cout);
 		std::cout << '\n';
 	}
 
@@ -531,7 +534,7 @@ void Compile(const std::string& lispCode)
 	if (printAsts)
 	{
 		std::cout << "Cpp AST:\n";
-		CppAst::PrintAst(cppAst);
+		CppAst::PrintAst(cppAst, std::cout);
 		std::cout << '\n';
 	}
 
