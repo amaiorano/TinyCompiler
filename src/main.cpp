@@ -4,6 +4,7 @@
 #include <iostream>
 #include <sstream>
 #include <map>
+#include <stdexcept>
 #include "variant_match.h"
 
 struct Token
@@ -51,7 +52,7 @@ std::vector<Token> Tokenize(const std::string text)
 				}
 				else
 				{
-					throw std::exception("Unexpected character");
+					throw std::logic_error("Unexpected character");
 				}
 			},
 			[&](InString& inString)
@@ -132,7 +133,7 @@ namespace LispAst
 
 			const auto& firstToken = *iter;
 			if (firstToken.type != Token::Type::Name)
-				throw std::exception("Expecting function name immediately after '('");
+				throw std::logic_error("Expecting function name immediately after '('");
 
 			callExpression->name = iter->value;
 			++iter;
@@ -155,7 +156,7 @@ namespace LispAst
 					break;
 
 				case Token::Type::Name:
-					throw std::exception("Unexpected name token in argument list");
+					throw std::logic_error("Unexpected name token in argument list");
 					break;
 
 				case Token::Type::Number:
@@ -165,7 +166,7 @@ namespace LispAst
 				}
 			}
 
-			throw std::exception("Missing ')' to end call expression");
+			throw std::logic_error("Missing ')' to end call expression");
 			return nullptr;
 		}
 	}
@@ -186,7 +187,7 @@ namespace LispAst
 		{
 			const auto& firstToken = *tokenIter;
 			if (!(firstToken.type == Token::Type::Paren && firstToken.value == "("))
-				throw std::exception("Program must start with '('");
+				throw std::logic_error("Program must start with '('");
 			++tokenIter;
 
 			programNode->body.emplace_back(ParseCallExpression(tokenIter, tokenEnd));
@@ -372,6 +373,11 @@ CppAst::NodeUniquePtr TransformLispAstToCppAst(const LispAst::NodeUniquePtr& lis
 			reference_wrapper_less<const LispAst::Node>
 		> m_context;
 
+		void AddNodeToVectorMapping(const LispAst::Node& node, std::vector<CppAst::NodeUniquePtr>& vec)
+		{
+			m_context.emplace(std::cref(node), std::ref(vec));
+		}
+
 		std::vector<CppAst::NodeUniquePtr>& GetContextVector(const LispAst::Node& lispNode)
 		{
 			auto iter = m_context.find(lispNode);
@@ -383,7 +389,7 @@ CppAst::NodeUniquePtr TransformLispAstToCppAst(const LispAst::NodeUniquePtr& lis
 		{
 			assert(m_programNode == nullptr);
 			auto cppProgramNode = std::make_unique<CppAst::ProgramNode>();
-			m_context.emplace(std::cref(lispProgramNode), std::ref(cppProgramNode->body));
+			AddNodeToVectorMapping(lispProgramNode, cppProgramNode->body);
 			m_programNode = std::move(cppProgramNode);
 		}
 
@@ -395,9 +401,9 @@ CppAst::NodeUniquePtr TransformLispAstToCppAst(const LispAst::NodeUniquePtr& lis
 			auto callExpressionNode = std::make_unique<CppAst::CallExpressionNode>();
 			callExpressionNode->callee = std::make_unique<CppAst::IdentifierNode>(lispCallExpressionNode.name);
 
-			// Add mapping from the Lisp CallExpressionNode to the parameter vector of our new Cpp CallExpressionNode.
-			m_context.emplace(std::cref(lispCallExpressionNode), std::ref(callExpressionNode->params));
-
+			// Add mapping from the Lisp CallExpressionNode to the parameter vector of our new Cpp CallExpressionNode
+			AddNodeToVectorMapping(lispCallExpressionNode, callExpressionNode->params);
+			
 			auto newNode = [&]() -> CppAst::NodeUniquePtr
 			{
 				// If parent is not a CallExpression, we wrap up our Cpp CallExpression node with an ExpressionStatement,
